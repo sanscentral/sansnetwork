@@ -20,9 +20,9 @@ import (
 )
 
 // NewPongMessage bytes for pong message including header
-func NewPongMessage(nonce uint64) []byte {
+func NewPongMessage(nonce uint64, testnet bool) []byte {
 	payload := typeconv.BytesFromUint64(nonce)
-	header := makeHeader(CommandPong, payload[:])
+	header := makeHeader(CommandPong, payload[:], testnet)
 	return append(header, payload[:]...)
 }
 

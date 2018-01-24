@@ -24,21 +24,26 @@ import (
 const maxSeedAttempts = 10
 
 // GetNodeIPs returns ip addresses from DNS seeds
-func GetNodeIPs() ([]net.IP, error) {
-	return getSeedNodes(0)
+func GetNodeIPs(testnet bool) ([]net.IP, error) {
+	return getSeedNodes(0, testnet)
 }
 
-// TODO: testnet or mainnet?
-func getSeedNodes(attempt int) ([]net.IP, error) {
+// getSeedNodes for testnet or mainnet
+func getSeedNodes(attempt int, testnet bool) ([]net.IP, error) {
 	s := rand.NewSource(time.Now().UnixNano())
 	r := rand.New(s)
 	host := mainnetDNSSeeds[r.Intn(len(mainnetDNSSeeds))]
+
+	if testnet {
+		host = testnetDNSSeeds[r.Intn(len(testnetDNSSeeds))]
+	}
+
 	ip, err := net.LookupIP(host)
 	if err != nil {
 		if attempt >= maxSeedAttempts {
 			return []net.IP{}, err
 		}
-		getSeedNodes(attempt + 1)
+		getSeedNodes(attempt+1, testnet)
 	}
 	return ip, nil
 }

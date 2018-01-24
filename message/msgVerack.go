@@ -22,8 +22,8 @@ import (
 )
 
 // NewVerackMessage creates a message to acknowledge a previously-received version message
-func NewVerackMessage() []byte {
-	return makeHeader(CommandVersionAcknowledge, []byte(""))
+func NewVerackMessage(testnet bool) []byte {
+	return makeHeader(CommandVersionAcknowledge, []byte(""), testnet)
 }
 
 // ReadVerackMessage reads verack message directly from TCP connection

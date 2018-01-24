@@ -20,9 +20,9 @@ import (
 )
 
 // NewPingMessage bytes for ping message including header
-func NewPingMessage(nonce uint64) []byte {
+func NewPingMessage(nonce uint64, testnet bool) []byte {
 	payload := typeconv.BytesFromUint64(nonce)
-	header := makeHeader(CommandPing, payload[:])
+	header := makeHeader(CommandPing, payload[:], testnet)
 	return append(header, payload[:]...)
 }
 

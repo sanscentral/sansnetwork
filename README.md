@@ -18,7 +18,7 @@ contact@sanscentral.org ([PGP](resources/publickey.contact@sanscentral.org.asc))
 
 ![AGPLv3 Logo](resources/agplv3-155x51.png)
 
-Copyright (C) 2018  Sans Central
+Copyright (C) 2018 Sans Central
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as

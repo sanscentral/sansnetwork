@@ -17,7 +17,7 @@ package seed
 
 var (
 	/*
-	* Mainnet seeds taken from bitcoin core implementation
+	* Mainnet DNS seeds
 	 */
 	mainnetDNSSeeds = []string{
 		"seed.bitcoin.sipa.be",
@@ -26,5 +26,6 @@ var (
 		"seed.bitcoinstats.com",
 		"seed.bitcoin.jonasschnelli.ch",
 		"seed.btc.petertodd.org",
+		"seed.bitnodes.io",
 	}
 )

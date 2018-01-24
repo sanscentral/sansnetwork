@@ -19,20 +19,20 @@ import (
 	"github.com/sanscentral/sansnetwork/node"
 )
 
-// seedConnectionCount is the number of connected nodes from seed
-const seedConnectionCount = 1
-
 // NetworkConnection is a self-managing connection to the bitcoin network
 type NetworkConnection struct {
-	nodes []node.Connection
-	die   bool
+	nodes              []node.Connection
+	die                bool
+	testnet            bool
+	requestedNodeCount int
 }
 
 // NewNetworkConnection starts a new connection to the bitcoin network
-// TODO: add options parameter to toggle testnet/mainnet, number of nodes,
-// log level & Maintain existing connections (Check for dead)
-func NewNetworkConnection() (NetworkConnection, error) {
-	newc := NetworkConnection{}
+func NewNetworkConnection(nodeCount int, testnet bool) (NetworkConnection, error) {
+	newc := NetworkConnection{
+		testnet:            testnet,
+		requestedNodeCount: nodeCount,
+	}
 	go newc.seedConnectionPool()
 	return newc, nil
 }
@@ -45,17 +45,18 @@ func (c *NetworkConnection) Close() {
 }
 
 // NodeCount returns the number of active nodes
-// this Network Connection is DIRECTLY connected to
+// this Network Connection is connected to
 func (c *NetworkConnection) NodeCount() int {
 	return len(c.nodes)
 }
 
+// TODO: Periodically check if connections are alive and top-up as needed 'node.connected will be false for dead connections'
 func (c *NetworkConnection) seedConnectionPool() {
-	for index := 0; index < seedConnectionCount-1; index++ {
+	for len(c.nodes) < c.requestedNodeCount {
 		if c.die {
 			break
 		}
-		node, err := node.NewConnection()
+		node, err := node.NewConnection(c.testnet)
 		if err != nil {
 			continue
 		}

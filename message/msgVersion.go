@@ -123,9 +123,9 @@ func parseVersionPayload(b []byte) (Version, error) {
 }
 
 // NewVersionMessage creates a 'version' control message including header
-func NewVersionMessage() []byte {
+func NewVersionMessage(testnet bool) []byte {
 	payload := makeVersionPayload()
-	header := makeHeader(CommandVersion, payload)
+	header := makeHeader(CommandVersion, payload, testnet)
 	return append(header, payload...)
 }
 

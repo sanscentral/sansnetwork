@@ -17,12 +17,13 @@ package seed
 
 var (
 	/*
-	* Testnet seeds taken from bitcoin core implementation
+	* Testnet DNS seeds
 	 */
 	testnetDNSSeeds = []string{
 		"testnet-seed.bitcoin.jonasschnelli.ch",
 		"seed.tbtc.petertodd.org",
 		"seed.testnet.bitcoin.sprovoost.nl",
 		"testnet-seed.bluematt.me",
+		"testnet-seed.bitcoin.schildbach.de",
 	}
 )

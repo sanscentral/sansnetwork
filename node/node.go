@@ -36,14 +36,19 @@ const (
 	nonceVal                    = 78
 )
 
-var knownNodes []net.IP
+// TODO: Import and export known nodes (Then use DNS only as fallback)
+
+var (
+	knownNodes []net.IP
+	inUseNodes []net.IP
+)
 
 // Connection is a single network node connection
 type Connection struct {
 	useragent    string
 	host         string
 	nonce        string
-	services     uint64
+	services     ServiceFlag // Bitfield for enabled services
 	conn         net.Conn
 	sendHeaders  bool
 	handling     bool
@@ -51,12 +56,16 @@ type Connection struct {
 	connected    bool
 	ping         int64
 	pendingPings map[uint64]int64
+	testnet      bool
+	endpoint     net.IP
 }
 
 // Close single node connection
 func (n *Connection) Close() {
 	n.die = true
 	n.conn.Close()
+	n.connected = false
+	removeFromInUseNodes(n.endpoint)
 }
 
 // UserAgent returns node useragent
@@ -89,11 +98,12 @@ func (n *Connection) startHeartBeat() {
 func (n *Connection) performPing() {
 	if n.connected && !n.handling {
 		nonce := time.Now().UnixNano() + nonceVal
-		ping := message.NewPingMessage(uint64(nonce))
+		ping := message.NewPingMessage(uint64(nonce), n.testnet)
 		_, err := n.conn.Write(ping)
 		if err != nil {
 			n.Close()
 			n.connected = false
+			removeFromInUseNodes(n.endpoint)
 		}
 		n.pendingPings[uint64(nonce)] = time.Now().UnixNano()
 	}
@@ -103,7 +113,7 @@ func (n *Connection) performPing() {
 func (n *Connection) handle(b []byte) {
 	n.startHandling()
 	defer n.endHandling()
-	if bytes.HasPrefix(b, message.MagicBytes()) {
+	if bytes.HasPrefix(b, message.MagicBytes(n.testnet)) {
 		h, err := message.ParseHeader(b)
 		var cmd string
 		var payload []byte
@@ -133,7 +143,7 @@ func (n *Connection) handle(b []byte) {
 		case message.CommandPing:
 			// Respond to ping with pong
 			nonce := message.ReadPingPayload(payload)
-			ping := message.NewPongMessage(nonce)
+			ping := message.NewPongMessage(nonce, n.testnet)
 			n.conn.Write(ping)
 		case message.CommandPong:
 			// Recieved pong
@@ -164,10 +174,10 @@ func (n *Connection) listen() {
 }
 
 // NewConnection creates a single new node connection
-func NewConnection() (Connection, error) {
+func NewConnection(testnet bool) (Connection, error) {
 	if len(knownNodes) == 0 {
-		seeds, err := seed.GetNodeIPs()
-		if err != nil {
+		seeds, err := seed.GetNodeIPs(testnet)
+		if err != nil || len(seeds) == 0 {
 			return Connection{}, errors.New("Failed to find a node")
 		}
 		knownNodes = append(knownNodes, seeds...)
@@ -175,81 +185,119 @@ func NewConnection() (Connection, error) {
 
 	s := rand.NewSource(time.Now().UnixNano())
 	attempts := 0
-	new := Connection{}
+	new := Connection{
+		testnet: testnet,
+	}
 	var conn net.Conn
 	var attemptedNode net.IP
 	for {
-		r := rand.New(s)
-		attemptedNode = knownNodes[r.Intn(len(knownNodes))]
-		serv := fmt.Sprintf("%s:%d", attemptedNode.String(), seed.MainnetPort)
-		var err error
-		conn, err = net.DialTimeout("tcp", serv, initialConnectionTimeoutSec*time.Second)
-		if err == nil {
-			break
+		aNodes := getAvailableNodes()
+		if len(aNodes) <= 0 {
+			//No nodes left
+			return Connection{}, errors.New("Failed to find a valid node")
 		}
+
+		r := rand.New(s)
+		attemptedNode = aNodes[r.Intn(len(aNodes))]
+
+		port := seed.MainnetPort
+		if testnet {
+			port = seed.TestnetPort
+		}
+
+		serv := fmt.Sprintf("%s:%d", attemptedNode.String(), port)
+		var err error
+
 		attempts++
 		if attempts >= maxConnectionAttempts {
 			return Connection{}, errors.New("Cannot connect to node exceeded max attempts")
 		}
+
+		conn, err = net.DialTimeout("tcp", serv, initialConnectionTimeoutSec*time.Second)
+		if err != nil {
+			removeFromKnownNodes(attemptedNode)
+			continue
+		}
+
+		// Send version
+		versionMsg := message.NewVersionMessage(testnet)
+		_, err = conn.Write(versionMsg)
+		if err != nil {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Failed to write version: %s\n", err.Error())
+			continue
+		}
+
+		// Recieve version
+		header, err := message.ReadHeader(conn)
+		if err != nil {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Header not understood: %s\n", err.Error())
+			continue
+		}
+
+		versionResponse, err := message.ReadVersionPayload(conn, header)
+		if err != nil {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Version message not understood: %s\n", err.Error())
+			continue
+		}
+
+		// Send verack
+		verackMsg := message.NewVerackMessage(testnet)
+		_, err = conn.Write(verackMsg)
+		if err != nil {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Failed to write ver ack: %s\n", err.Error())
+			continue
+		}
+
+		// Recieve verack
+		ready, err := message.ReadVerackMessage(conn)
+		if err != nil {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Verack not understood: %s\n", err.Error())
+			continue
+		}
+		if ready {
+			// Connection success
+			new.connected = true
+		} else {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Did not recieve verack where expected skipping host\n")
+			continue
+		}
+
+		new.conn = conn
+		new.useragent = typeconv.CleanStringFromBytes(versionResponse.Useragent[:])
+		new.host = conn.RemoteAddr().String()
+		new.nonce = fmt.Sprintf("%d", versionResponse.Nonce)
+		new.services = ServiceFlag(typeconv.Uint64FromBytes(versionResponse.Services[:]))
+		new.pendingPings = map[uint64]int64{}
+
+		desiredNode, reason := isDesiredNode(new.services)
+		if !desiredNode {
+			conn.Close()
+			removeFromKnownNodes(attemptedNode)
+			fmt.Printf("Skipping host because %s\n", reason)
+			continue
+		}
+		break
 	}
 
-	var err error
-	// Send version
-	versionMsg := message.NewVersionMessage()
-	_, err = conn.Write(versionMsg)
-	if err != nil {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, fmt.Errorf("Failed to write version: %s", err.Error())
-	}
+	inUseNodes = append(inUseNodes, attemptedNode)
+	new.endpoint = attemptedNode
 
-	// Recieve version
-	header, err := message.ReadHeader(conn)
-	if err != nil {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, fmt.Errorf("Header not understood: %s", err.Error())
-	}
+	// TODO: Send bloom filter to node
 
-	versionResponse, err := message.ReadVersionPayload(conn, header)
-	if err != nil {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, fmt.Errorf("Version message not understood: %s", err.Error())
-	}
-
-	// Send verack
-	verackMsg := message.NewVerackMessage()
-	_, err = conn.Write(verackMsg)
-	if err != nil {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, fmt.Errorf("Failed to write ver ack: %s", err.Error())
-	}
-
-	// Recieve verack
-	ready, err := message.ReadVerackMessage(conn)
-	if err != nil {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, fmt.Errorf("Verack not understood: %s", err.Error())
-	}
-	if ready {
-		// Connection success
-		new.connected = true
-	} else {
-		conn.Close()
-		removeFromKnownNodes(attemptedNode)
-		return Connection{}, errors.New("Did not recieve verack where expected")
-	}
-
-	new.conn = conn
-	new.useragent = typeconv.CleanStringFromBytes(versionResponse.Useragent[:])
-	new.host = conn.RemoteAddr().String()
-	new.nonce = fmt.Sprintf("%d", versionResponse.Nonce)
-	new.services = typeconv.Uint64FromBytes(versionResponse.Services[:])
-	new.pendingPings = map[uint64]int64{}
-
+	// TODO: Desired nodes may be likely to have desired peers,
+	// get peers from this node and append this to knownNodes
 	fmt.Printf("Connected to:%s\n", new.UserAgent())
 
 	go new.listen()
@@ -257,6 +305,68 @@ func NewConnection() (Connection, error) {
 	return new, nil
 }
 
+// isDesiredNode determines if this node is desired based on the services it offers
+func isDesiredNode(connservices ServiceFlag) (result bool, reason string) {
+	if !serviceSupported(connservices, ServiceFullNode) {
+		return false, "node is not a full node"
+	}
+
+	if !serviceSupported(connservices, ServiceBloom) {
+		return false, "node does not support bloom filtering"
+	}
+
+	if !serviceSupported(connservices, ServiceWitness) {
+		return false, "node does not support witness"
+	}
+
+	if !serviceSupported(connservices, ServiceWitness) {
+		return false, "node does not support witness"
+	}
+
+	if serviceSupported(connservices, ServiceBCH) {
+		return false, "node is a bitcoin cash node"
+	}
+
+	return true, ""
+}
+
+func serviceSupported(hostServices, desiredService ServiceFlag) bool {
+	return hostServices&desiredService == desiredService
+}
+
 func removeFromKnownNodes(ip net.IP) {
-	// TODO: remove attemptedNode from known nodes
+	newKnown := []net.IP{}
+	for _, e := range knownNodes {
+		if !e.Equal(ip) {
+			newKnown = append(newKnown, e)
+		}
+	}
+	knownNodes = newKnown
+}
+
+func removeFromInUseNodes(ip net.IP) {
+	newInUse := []net.IP{}
+	for _, e := range inUseNodes {
+		if !e.Equal(ip) {
+			newInUse = append(newInUse, e)
+		}
+	}
+	inUseNodes = newInUse
+}
+
+func getAvailableNodes() []net.IP {
+	avail := []net.IP{}
+	vacant := map[string]bool{}
+
+	for _, e := range inUseNodes {
+		vacant[e.String()] = true
+	}
+
+	for _, e := range knownNodes {
+		if !vacant[e.String()] {
+			avail = append(avail, e)
+		}
+	}
+
+	return avail
 }

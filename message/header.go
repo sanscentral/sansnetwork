@@ -49,8 +49,12 @@ func HeaderLength() int {
 }
 
 // MagicBytes returns signal bytes
-func MagicBytes() []byte {
-	return []byte(mainnetMagicBytes)
+func MagicBytes(testnet bool) []byte {
+	t := []byte(mainnetMagicBytes)
+	if testnet {
+		t = []byte(testnetMagicBytes)
+	}
+	return t
 }
 
 func (h *Header) verifyPayload(payload []byte) bool {
@@ -58,13 +62,13 @@ func (h *Header) verifyPayload(payload []byte) bool {
 	return h.Checksum == chk
 }
 
-func makeHeader(command string, payload []byte) []byte {
+func makeHeader(command string, payload []byte, testnet bool) []byte {
 	cmd := typeconv.CommandFromBytes(command)
 	ln := typeconv.BytesFromUint32(uint32(len(payload)))
 	chk := typeconv.CheckSumFromBytes(payload)
 
 	header := []byte{}
-	header = append(header, MagicBytes()...)
+	header = append(header, MagicBytes(testnet)...)
 	header = append(header, cmd[:]...)
 	header = append(header, ln[:]...)
 	header = append(header, chk[:]...)

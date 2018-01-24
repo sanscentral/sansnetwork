@@ -22,8 +22,8 @@ import (
 )
 
 // makeSendHeadersMessage
-func makeSendHeadersMessage() []byte {
-	return makeHeader(CommandSendHeaders, []byte(""))
+func makeSendHeadersMessage(testnet bool) []byte {
+	return makeHeader(CommandSendHeaders, []byte(""), testnet)
 }
 
 func readSendHeadersMessage(conn net.Conn) (bool, error) {

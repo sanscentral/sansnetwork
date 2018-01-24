@@ -26,8 +26,9 @@ import (
 )
 
 func main() {
-	// Create a new connection to the BTC network
-	networkconn, err := sansnetwork.NewNetworkConnection()
+	// Create a new connection to the network
+	isTestnet := false
+	networkconn, err := sansnetwork.NewNetworkConnection(1, isTestnet)
 	if err != nil {
 		panic(err)
 	}
@@ -36,7 +37,7 @@ func main() {
 	// Set callback to handle new inventory entry messages
 	inventory.SetInventoryHandler(invHandler)
 
-	// Leave connection running
+	// Leave connection open
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	var wg sync.WaitGroup
